@@ -189,7 +189,7 @@ main(int argc, char *argv[])
 
         /* Test ivec_inner_product_ref  */
         if (cmd_flags.run_func_flag[IVEC_INNER_PRODUCT_REF])
-            test_ivec_L2sqr_ref (results, IVEC_INNER_PRODUCT_REF, array_index,
+            test_ivec_inner_product_ref (results, IVEC_INNER_PRODUCT_REF, array_index,
                                  cmd_flags.num_runs,
                                  cmd_flags.run_code_version, xi, yi, size);
 
