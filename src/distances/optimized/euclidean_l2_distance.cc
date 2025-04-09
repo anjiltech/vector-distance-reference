@@ -28,47 +28,310 @@
 
 namespace powerpc {
 
-float
-fvec_L2sqr_ref_ppc(const float* x, const float* y, size_t d) {
-    size_t i;
+//vectorized optimization for L2sqr
+// float
+// fvec_L2sqr_ref_ppc(const float* x, const float* y, size_t d) {
+//     size_t i;
 
+//     float res = 0;
+//     /* PowerPC, vectorize the function using PowerPC GCC built-in calls.
+//        Original code:
+
+//        for (i = 0; i < d; i++) {
+//            const float tmp = x[i] - y[i];
+//            res += tmp * tmp;
+//        }
+//        return res;
+//     */
+
+//     /* Vector implmentaion uses vector size of FLOAT_VEC_SIZE.  If the input
+//        array size is not a power of FLOAT_VEC_SIZE, do the remaining elements
+//        in scalar mode.  */
+//     size_t base;
+
+//     vector float *vx, *vy;
+//     vector float vtmp = {0, 0, 0, 0};
+//     vector float vres = {0, 0, 0, 0};
+
+//     base = (d / FLOAT_VEC_SIZE) * FLOAT_VEC_SIZE;
+
+//     for (size_t i = 0; i < base; i = i + FLOAT_VEC_SIZE) {
+//         vx = (vector float *)(&x[i]);
+//         vy = (vector float *)(&y[i]);
+
+//         vtmp = vx[0] - vy[0];
+//         vres += vtmp * vtmp;
+//     }
+
+//     /* Handle any remaining data elements */
+//     for (i = base; i < d; i++) {
+//         const float tmp = x[i] - y[i];
+//         res += tmp * tmp;
+//     }
+
+//     return res + vres[0] + vres[1] + vres[2] + vres[3];
+// }
+
+
+//optimized version with different stages of unrolling
+float fvec_L2sqr_ref_ppc(const float* x, const float* y, size_t d) {
     float res = 0;
-    /* PowerPC, vectorize the function using PowerPC GCC built-in calls.
-       Original code:
 
-       for (i = 0; i < d; i++) {
-           const float tmp = x[i] - y[i];
-           res += tmp * tmp;
-       }
-       return res;
-    */
+    // For small d, no vector unrolling is beneficial.
+    if (d < 32) {
+        size_t base;
 
-    /* Vector implmentaion uses vector size of FLOAT_VEC_SIZE.  If the input
-       array size is not a power of FLOAT_VEC_SIZE, do the remaining elements
-       in scalar mode.  */
-    size_t base;
+        vector float *vx, *vy;
+        vector float vtmp = {0, 0, 0, 0};
+        vector float vres = {0, 0, 0, 0};
 
-    vector float *vx, *vy;
-    vector float vtmp = {0, 0, 0, 0};
-    vector float vres = {0, 0, 0, 0};
+        base = (d / FLOAT_VEC_SIZE) * FLOAT_VEC_SIZE;
 
-    base = (d / FLOAT_VEC_SIZE) * FLOAT_VEC_SIZE;
+        for (size_t i = 0; i < base; i += FLOAT_VEC_SIZE) {
+            vx = (vector float*)(&x[i]);
+            vy = (vector float*)(&y[i]);
 
-    for (size_t i = 0; i < base; i = i + FLOAT_VEC_SIZE) {
-        vx = (vector float *)(&x[i]);
-        vy = (vector float *)(&y[i]);
+            vtmp = vx[0] - vy[0];
+            vres += vtmp * vtmp;
+        }
 
-        vtmp = vx[0] - vy[0];
-        vres += vtmp * vtmp;
+        /* Handle any remaining data elements */
+        for (size_t i = base; i < d; i++) {
+            const float tmp = x[i] - y[i];
+            res += tmp * tmp;
+        }
+
+        return res + vres[0] + vres[1] + vres[2] + vres[3];
     }
+    // For moderate d: use unroll factor 4 for d between 32 and 64.
+    else if (d < 64 || d == 48) {
+        size_t factor = FLOAT_VEC_SIZE * 4;
+        size_t base = (d / factor) * factor;
+        vector float *vx0, *vy0, *vx1, *vy1, *vx2, *vy2, *vx3, *vy3;
+        vector float vres0 = {0, 0, 0, 0};
+        vector float vres1 = {0, 0, 0, 0};
+        vector float vres2 = {0, 0, 0, 0};
+        vector float vres3 = {0, 0, 0, 0};
+        vector float vtmp0, vtmp1, vtmp2, vtmp3;
 
-    /* Handle any remaining data elements */
-    for (i = base; i < d; i++) {
-        const float tmp = x[i] - y[i];
-        res += tmp * tmp;
+        for (size_t i = 0; i < base; i += factor) {
+            vx0 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 0]);
+            vy0 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 0]);
+            vx1 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 1]);
+            vy1 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 1]);
+            vx2 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 2]);
+            vy2 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 2]);
+            vx3 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 3]);
+            vy3 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 3]);
+
+            vtmp0 = vx0[0] - vy0[0];
+            vtmp1 = vx1[0] - vy1[0];
+            vtmp2 = vx2[0] - vy2[0];
+            vtmp3 = vx3[0] - vy3[0];
+
+            vres0 += vtmp0 * vtmp0;
+            vres1 += vtmp1 * vtmp1;
+            vres2 += vtmp2 * vtmp2;
+            vres3 += vtmp3 * vtmp3;
+        }
+
+        // Process leftover elements
+        for (size_t i = base; i < d; i++) {
+            float tmp = x[i] - y[i];
+            res += tmp * tmp;
+        }
+
+        // Pairwise reduction of the vector accumulators
+        vres0 += vres1;
+        vres2 += vres3;
+        vres0 += vres2;
+        res += vres0[0] + vres0[1] + vres0[2] + vres0[3];
+
+        return res;
     }
+    // For larger sizes, use unroll factor 8 when d is between 64 and 128.
+    else if (d < 128) {
+        size_t factor = FLOAT_VEC_SIZE * 8;
+        size_t base = (d / factor) * factor;
+        vector float *vx0, *vy0, *vx1, *vy1, *vx2, *vy2, *vx3, *vy3,
+                     *vx4, *vy4, *vx5, *vy5, *vx6, *vy6, *vx7, *vy7;
+        vector float vres0 = {0, 0, 0, 0};
+        vector float vres1 = {0, 0, 0, 0};
+        vector float vres2 = {0, 0, 0, 0};
+        vector float vres3 = {0, 0, 0, 0};
+        vector float vres4 = {0, 0, 0, 0};
+        vector float vres5 = {0, 0, 0, 0};
+        vector float vres6 = {0, 0, 0, 0};
+        vector float vres7 = {0, 0, 0, 0};
+        vector float vtmp0, vtmp1, vtmp2, vtmp3, vtmp4, vtmp5, vtmp6, vtmp7;
 
-    return res + vres[0] + vres[1] + vres[2] + vres[3];
+        for (size_t i = 0; i < base; i += factor) {
+            vx0 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 0]);
+            vy0 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 0]);
+            vx1 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 1]);
+            vy1 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 1]);
+            vx2 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 2]);
+            vy2 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 2]);
+            vx3 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 3]);
+            vy3 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 3]);
+            vx4 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 4]);
+            vy4 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 4]);
+            vx5 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 5]);
+            vy5 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 5]);
+            vx6 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 6]);
+            vy6 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 6]);
+            vx7 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 7]);
+            vy7 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 7]);
+
+            vtmp0 = vx0[0] - vy0[0];
+            vtmp1 = vx1[0] - vy1[0];
+            vtmp2 = vx2[0] - vy2[0];
+            vtmp3 = vx3[0] - vy3[0];
+            vtmp4 = vx4[0] - vy4[0];
+            vtmp5 = vx5[0] - vy5[0];
+            vtmp6 = vx6[0] - vy6[0];
+            vtmp7 = vx7[0] - vy7[0];
+
+            vres0 += vtmp0 * vtmp0;
+            vres1 += vtmp1 * vtmp1;
+            vres2 += vtmp2 * vtmp2;
+            vres3 += vtmp3 * vtmp3;
+            vres4 += vtmp4 * vtmp4;
+            vres5 += vtmp5 * vtmp5;
+            vres6 += vtmp6 * vtmp6;
+            vres7 += vtmp7 * vtmp7;
+        }
+
+        // Process remainder
+        for (size_t i = base; i < d; i++) {
+            float tmp = x[i] - y[i];
+            res += tmp * tmp;
+        }
+
+        // Reduction
+        vres0 += vres1;
+        vres2 += vres3;
+        vres4 += vres5;
+        vres6 += vres7;
+        vres0 += vres2;
+        vres4 += vres6;
+        vres0 += vres4;
+        res += vres0[0] + vres0[1] + vres0[2] + vres0[3];
+
+        return res;
+    }
+    // For very large d (>= 128), we use unroll factor 16.
+    else {
+        size_t factor = FLOAT_VEC_SIZE * 16;
+        size_t base = (d / factor) * factor;
+        vector float *vx0,  *vy0,  *vx1,  *vy1,  *vx2,  *vy2,  *vx3,  *vy3,
+                     *vx4,  *vy4,  *vx5,  *vy5,  *vx6,  *vy6,  *vx7,  *vy7,
+                     *vx8,  *vy8,  *vx9,  *vy9,  *vx10, *vy10, *vx11, *vy11,
+                     *vx12, *vy12, *vx13, *vy13, *vx14, *vy14, *vx15, *vy15;
+        vector float vres0 = {0, 0, 0, 0};
+        vector float vres1 = {0, 0, 0, 0};
+        vector float vres2 = {0, 0, 0, 0};
+        vector float vres3 = {0, 0, 0, 0};
+        vector float vres4 = {0, 0, 0, 0};
+        vector float vres5 = {0, 0, 0, 0};
+        vector float vres6 = {0, 0, 0, 0};
+        vector float vres7 = {0, 0, 0, 0};
+        vector float vres8 = {0, 0, 0, 0};
+        vector float vres9 = {0, 0, 0, 0};
+        vector float vres10 = {0, 0, 0, 0};
+        vector float vres11 = {0, 0, 0, 0};
+        vector float vres12 = {0, 0, 0, 0};
+        vector float vres13 = {0, 0, 0, 0};
+        vector float vres14 = {0, 0, 0, 0};
+        vector float vres15 = {0, 0, 0, 0};
+        vector float vtmp0,  vtmp1,  vtmp2,  vtmp3,  vtmp4,  vtmp5,  vtmp6,  vtmp7,
+                     vtmp8,  vtmp9,  vtmp10, vtmp11, vtmp12, vtmp13, vtmp14, vtmp15;
+
+        for (size_t i = 0; i < base; i += factor) {
+            vx0  = (vector float *)(&x[i + FLOAT_VEC_SIZE * 0]);
+            vy0  = (vector float *)(&y[i + FLOAT_VEC_SIZE * 0]);
+            vx1  = (vector float *)(&x[i + FLOAT_VEC_SIZE * 1]);
+            vy1  = (vector float *)(&y[i + FLOAT_VEC_SIZE * 1]);
+            vx2  = (vector float *)(&x[i + FLOAT_VEC_SIZE * 2]);
+            vy2  = (vector float *)(&y[i + FLOAT_VEC_SIZE * 2]);
+            vx3  = (vector float *)(&x[i + FLOAT_VEC_SIZE * 3]);
+            vy3  = (vector float *)(&y[i + FLOAT_VEC_SIZE * 3]);
+            vx4  = (vector float *)(&x[i + FLOAT_VEC_SIZE * 4]);
+            vy4  = (vector float *)(&y[i + FLOAT_VEC_SIZE * 4]);
+            vx5  = (vector float *)(&x[i + FLOAT_VEC_SIZE * 5]);
+            vy5  = (vector float *)(&y[i + FLOAT_VEC_SIZE * 5]);
+            vx6  = (vector float *)(&x[i + FLOAT_VEC_SIZE * 6]);
+            vy6  = (vector float *)(&y[i + FLOAT_VEC_SIZE * 6]);
+            vx7  = (vector float *)(&x[i + FLOAT_VEC_SIZE * 7]);
+            vy7  = (vector float *)(&y[i + FLOAT_VEC_SIZE * 7]);
+            vx8  = (vector float *)(&x[i + FLOAT_VEC_SIZE * 8]);
+            vy8  = (vector float *)(&y[i + FLOAT_VEC_SIZE * 8]);
+            vx9  = (vector float *)(&x[i + FLOAT_VEC_SIZE * 9]);
+            vy9  = (vector float *)(&y[i + FLOAT_VEC_SIZE * 9]);
+            vx10 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 10]);
+            vy10 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 10]);
+            vx11 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 11]);
+            vy11 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 11]);
+            vx12 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 12]);
+            vy12 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 12]);
+            vx13 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 13]);
+            vy13 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 13]);
+            vx14 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 14]);
+            vy14 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 14]);
+            vx15 = (vector float *)(&x[i + FLOAT_VEC_SIZE * 15]);
+            vy15 = (vector float *)(&y[i + FLOAT_VEC_SIZE * 15]);
+
+            vtmp0  = vx0[0]  - vy0[0];
+            vtmp1  = vx1[0]  - vy1[0];
+            vtmp2  = vx2[0]  - vy2[0];
+            vtmp3  = vx3[0]  - vy3[0];
+            vtmp4  = vx4[0]  - vy4[0];
+            vtmp5  = vx5[0]  - vy5[0];
+            vtmp6  = vx6[0]  - vy6[0];
+            vtmp7  = vx7[0]  - vy7[0];
+            vtmp8  = vx8[0]  - vy8[0];
+            vtmp9  = vx9[0]  - vy9[0];
+            vtmp10 = vx10[0] - vy10[0];
+            vtmp11 = vx11[0] - vy11[0];
+            vtmp12 = vx12[0] - vy12[0];
+            vtmp13 = vx13[0] - vy13[0];
+            vtmp14 = vx14[0] - vy14[0];
+            vtmp15 = vx15[0] - vy15[0];
+
+            vres0  += vtmp0  * vtmp0;
+            vres1  += vtmp1  * vtmp1;
+            vres2  += vtmp2  * vtmp2;
+            vres3  += vtmp3  * vtmp3;
+            vres4  += vtmp4  * vtmp4;
+            vres5  += vtmp5  * vtmp5;
+            vres6  += vtmp6  * vtmp6;
+            vres7  += vtmp7  * vtmp7;
+            vres8  += vtmp8  * vtmp8;
+            vres9  += vtmp9  * vtmp9;
+            vres10 += vtmp10 * vtmp10;
+            vres11 += vtmp11 * vtmp11;
+            vres12 += vtmp12 * vtmp12;
+            vres13 += vtmp13 * vtmp13;
+            vres14 += vtmp14 * vtmp14;
+            vres15 += vtmp15 * vtmp15;
+        }
+
+        // Process remaining elements
+        for (size_t i = base; i < d; i++) {
+            float tmp = x[i] - y[i];
+            res += tmp * tmp;
+        }
+
+        // Reduction tree: reduce the 16 vector accumulators into one.
+        vres0  += vres1;   vres2  += vres3;   vres4  += vres5;   vres6  += vres7;
+        vres8  += vres9;   vres10 += vres11;  vres12 += vres13;  vres14 += vres15;
+        vres0  += vres2;   vres4  += vres6;   vres8  += vres10;  vres12 += vres14;
+        vres0  += vres4;   vres8  += vres12;
+        vres0  += vres8;
+
+        res += vres0[0] + vres0[1] + vres0[2] + vres0[3];
+        return res;
+    }
 }
 
 float
