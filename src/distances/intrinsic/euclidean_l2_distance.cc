@@ -23,50 +23,315 @@
 #include <cmath>
 
 namespace powerpc {
+//vectorized optimization for L2sqr using intrinsics
+// float
+// fvec_L2sqr_ref_ippc (const float* x, const float* y, size_t d) {
+//     size_t i;
 
-float
-fvec_L2sqr_ref_ippc (const float* x, const float* y, size_t d) {
-    size_t i;
+//     float res = 0;
+//     /* PowerPC, vectorize the function using PowerPC GCC built-in calls.
+//        Original code:
 
+//        for (i = 0; i < d; i++) {
+//            const float tmp = x[i] - y[i];
+//            res += tmp * tmp;
+//        }
+//        return res;
+//     */
+
+//     /* Vector implmentaion uses vector size of FLOAT_VEC_SIZE.  If the input
+//        array size is not a power of FLOAT_VEC_SIZE, do the remaining elements
+//        in scalar mode.  */
+//     size_t base;
+
+//     vector float vx, vy;
+//     vector float vtmp = {0, 0, 0, 0};
+//     vector float vres = {0, 0, 0, 0};
+
+//     base = (d / FLOAT_VEC_SIZE) * FLOAT_VEC_SIZE;
+
+//     for (size_t i = 0; i < base; i = i + FLOAT_VEC_SIZE) {
+//         /* Load up the data vectors */
+//         vx = vec_xl ((long)(i*sizeof(float)), (float *)x);
+//         vy = vec_xl ((long)(i*sizeof(float)), (float *)y);
+
+//         vtmp = vec_sub(vx, vy);
+//         vres = vec_madd(vtmp, vtmp, vres);
+//     }
+
+//     /* Handle any remaining data elements */
+//     for (i = base; i < d; i++) {
+//         const float tmp = x[i] - y[i];
+//         res += tmp * tmp;
+//     }
+
+//     return res + vres[0] + vres[1] + vres[2] + vres[3];
+// } 
+
+//optimized version with different stages of unrolling with intrinsics
+float fvec_L2sqr_ref_ippc(const float *x, const float *y, size_t d)
+{
     float res = 0;
-    /* PowerPC, vectorize the function using PowerPC GCC built-in calls.
-       Original code:
 
-       for (i = 0; i < d; i++) {
-           const float tmp = x[i] - y[i];
-           res += tmp * tmp;
-       }
-       return res;
-    */
+    // For small vector lengths, simply vectorize without unrolling.
+    if (d < 32) {
+        size_t base = (d / 4) * 4;  // process in chunks of 4 floats
+        vector float vres = {0, 0, 0, 0};
 
-    /* Vector implmentaion uses vector size of FLOAT_VEC_SIZE.  If the input
-       array size is not a power of FLOAT_VEC_SIZE, do the remaining elements
-       in scalar mode.  */
-    size_t base;
-
-    vector float vx, vy;
-    vector float vtmp = {0, 0, 0, 0};
-    vector float vres = {0, 0, 0, 0};
-
-    base = (d / FLOAT_VEC_SIZE) * FLOAT_VEC_SIZE;
-
-    for (size_t i = 0; i < base; i = i + FLOAT_VEC_SIZE) {
-        /* Load up the data vectors */
-        vx = vec_xl ((long)(i*sizeof(float)), (float *)x);
-        vy = vec_xl ((long)(i*sizeof(float)), (float *)y);
-
-        vtmp = vec_sub(vx, vy);
-        vres = vec_madd(vtmp, vtmp, vres);
+        for (size_t i = 0; i < base; i += 4) {
+            vector float vx = vec_xl(0, &x[i]);
+            vector float vy = vec_xl(0, &y[i]);
+            vector float diff = vec_sub(vx, vy);
+            vres = vec_madd(diff, diff, vres);
+        }
+        // Process any remaining elements with scalar code.
+        for (size_t i = base; i < d; i++) {
+            float tmp = x[i] - y[i];
+            res += tmp * tmp;
+        }
+        // Sum the 4 floats of the vector accumulator.
+        res += vec_extract(vres, 0) +
+                vec_extract(vres, 1) +
+                vec_extract(vres, 2) +
+                vec_extract(vres, 3);
+        return res;
     }
+    // For moderate sizes (32 ≤ d < 64, with a special check for d == 48),
+    // use an unroll factor of 4 (16 elements per iteration).
+    else if (d < 64 || d == 48) {
+        size_t factor = 16; // 4 floats/vector * 4 = 16 floats per iteration
+        size_t base = (d / factor) * factor;
+        vector float vres0 = {0, 0, 0, 0};
+        vector float vres1 = {0, 0, 0, 0};
+        vector float vres2 = {0, 0, 0, 0};
+        vector float vres3 = {0, 0, 0, 0};
 
-    /* Handle any remaining data elements */
-    for (i = base; i < d; i++) {
-        const float tmp = x[i] - y[i];
-        res += tmp * tmp;
+        for (size_t i = 0; i < base; i += factor) {
+            vector float vx0 = vec_xl(0, &x[i +  0]);
+            vector float vy0 = vec_xl(0, &y[i +  0]);
+            vector float vx1 = vec_xl(0, &x[i +  4]);
+            vector float vy1 = vec_xl(0, &y[i +  4]);
+            vector float vx2 = vec_xl(0, &x[i +  8]);
+            vector float vy2 = vec_xl(0, &y[i +  8]);
+            vector float vx3 = vec_xl(0, &x[i + 12]);
+            vector float vy3 = vec_xl(0, &y[i + 12]);
+
+            vector float diff0 = vec_sub(vx0, vy0);
+            vector float diff1 = vec_sub(vx1, vy1);
+            vector float diff2 = vec_sub(vx2, vy2);
+            vector float diff3 = vec_sub(vx3, vy3);
+
+            vres0 = vec_madd(diff0, diff0, vres0);
+            vres1 = vec_madd(diff1, diff1, vres1);
+            vres2 = vec_madd(diff2, diff2, vres2);
+            vres3 = vec_madd(diff3, diff3, vres3);
+        }
+        // Process any remainder in scalar mode.
+        for (size_t i = base; i < d; i++) {
+            float tmp = x[i] - y[i];
+            res += tmp * tmp;
+        }
+        // Combine vector accumulators.
+        vector float vsum = vec_add(vec_add(vres0, vres1),
+                                    vec_add(vres2, vres3));
+        res += vec_extract(vsum, 0) +
+                vec_extract(vsum, 1) +
+                vec_extract(vsum, 2) +
+                vec_extract(vsum, 3);
+        return res;
     }
+    // For vector lengths between 64 and 128,
+    // use an unroll factor of 8 (32 elements per iteration).
+    else if (d < 128) {
+        size_t factor = 32; // 4*8 = 32 floats per iteration
+        size_t base = (d / factor) * factor;
+        // Declare 8 accumulators.
+        vector float vres0 = {0, 0, 0, 0};
+        vector float vres1 = {0, 0, 0, 0};
+        vector float vres2 = {0, 0, 0, 0};
+        vector float vres3 = {0, 0, 0, 0};
+        vector float vres4 = {0, 0, 0, 0};
+        vector float vres5 = {0, 0, 0, 0};
+        vector float vres6 = {0, 0, 0, 0};
+        vector float vres7 = {0, 0, 0, 0};
 
-    return res + vres[0] + vres[1] + vres[2] + vres[3];
+        for (size_t i = 0; i < base; i += factor) {
+            vector float vx0 = vec_xl(0, &x[i +  0]);
+            vector float vy0 = vec_xl(0, &y[i +  0]);
+            vector float vx1 = vec_xl(0, &x[i +  4]);
+            vector float vy1 = vec_xl(0, &y[i +  4]);
+            vector float vx2 = vec_xl(0, &x[i +  8]);
+            vector float vy2 = vec_xl(0, &y[i +  8]);
+            vector float vx3 = vec_xl(0, &x[i + 12]);
+            vector float vy3 = vec_xl(0, &y[i + 12]);
+            vector float vx4 = vec_xl(0, &x[i + 16]);
+            vector float vy4 = vec_xl(0, &y[i + 16]);
+            vector float vx5 = vec_xl(0, &x[i + 20]);
+            vector float vy5 = vec_xl(0, &y[i + 20]);
+            vector float vx6 = vec_xl(0, &x[i + 24]);
+            vector float vy6 = vec_xl(0, &y[i + 24]);
+            vector float vx7 = vec_xl(0, &x[i + 28]);
+            vector float vy7 = vec_xl(0, &y[i + 28]);
+
+            vector float diff0 = vec_sub(vx0, vy0);
+            vector float diff1 = vec_sub(vx1, vy1);
+            vector float diff2 = vec_sub(vx2, vy2);
+            vector float diff3 = vec_sub(vx3, vy3);
+            vector float diff4 = vec_sub(vx4, vy4);
+            vector float diff5 = vec_sub(vx5, vy5);
+            vector float diff6 = vec_sub(vx6, vy6);
+            vector float diff7 = vec_sub(vx7, vy7);
+
+            vres0 = vec_madd(diff0, diff0, vres0);
+            vres1 = vec_madd(diff1, diff1, vres1);
+            vres2 = vec_madd(diff2, diff2, vres2);
+            vres3 = vec_madd(diff3, diff3, vres3);
+            vres4 = vec_madd(diff4, diff4, vres4);
+            vres5 = vec_madd(diff5, diff5, vres5);
+            vres6 = vec_madd(diff6, diff6, vres6);
+            vres7 = vec_madd(diff7, diff7, vres7);
+        }
+        // Build a reduction tree over the 8 accumulators.
+        vector float vsum0 = vec_add(vres0, vres1);
+        vector float vsum1 = vec_add(vres2, vres3);
+        vector float vsum2 = vec_add(vres4, vres5);
+        vector float vsum3 = vec_add(vres6, vres7);
+        vsum0 = vec_add(vsum0, vsum1);
+        vsum2 = vec_add(vsum2, vsum3);
+        vector float vsum = vec_add(vsum0, vsum2);
+        // Handle any leftovers.
+        for (size_t i = base; i < d; i++) {
+            float tmp = x[i] - y[i];
+            res += tmp * tmp;
+        }
+        res += vec_extract(vsum, 0) +
+                vec_extract(vsum, 1) +
+                vec_extract(vsum, 2) +
+                vec_extract(vsum, 3);
+        return res;
+    }
+    // For very large vectors (d ≥ 128), use unroll factor 16 (64 elements per iteration).
+    else {
+        size_t factor = 64; // 4 floats * 16 = 64 floats per iteration
+        size_t base = (d / factor) * factor;
+        // Declare 16 accumulators.
+        vector float vres0  = {0, 0, 0, 0};
+        vector float vres1  = {0, 0, 0, 0};
+        vector float vres2  = {0, 0, 0, 0};
+        vector float vres3  = {0, 0, 0, 0};
+        vector float vres4  = {0, 0, 0, 0};
+        vector float vres5  = {0, 0, 0, 0};
+        vector float vres6  = {0, 0, 0, 0};
+        vector float vres7  = {0, 0, 0, 0};
+        vector float vres8  = {0, 0, 0, 0};
+        vector float vres9  = {0, 0, 0, 0};
+        vector float vres10 = {0, 0, 0, 0};
+        vector float vres11 = {0, 0, 0, 0};
+        vector float vres12 = {0, 0, 0, 0};
+        vector float vres13 = {0, 0, 0, 0};
+        vector float vres14 = {0, 0, 0, 0};
+        vector float vres15 = {0, 0, 0, 0};
+
+        for (size_t i = 0; i < base; i += factor) {
+            vector float vx0  = vec_xl(0, &x[i +   0]);
+            vector float vy0  = vec_xl(0, &y[i +   0]);
+            vector float vx1  = vec_xl(0, &x[i +   4]);
+            vector float vy1  = vec_xl(0, &y[i +   4]);
+            vector float vx2  = vec_xl(0, &x[i +   8]);
+            vector float vy2  = vec_xl(0, &y[i +   8]);
+            vector float vx3  = vec_xl(0, &x[i +  12]);
+            vector float vy3  = vec_xl(0, &y[i +  12]);
+            vector float vx4  = vec_xl(0, &x[i +  16]);
+            vector float vy4  = vec_xl(0, &y[i +  16]);
+            vector float vx5  = vec_xl(0, &x[i +  20]);
+            vector float vy5  = vec_xl(0, &y[i +  20]);
+            vector float vx6  = vec_xl(0, &x[i +  24]);
+            vector float vy6  = vec_xl(0, &y[i +  24]);
+            vector float vx7  = vec_xl(0, &x[i +  28]);
+            vector float vy7  = vec_xl(0, &y[i +  28]);
+            vector float vx8  = vec_xl(0, &x[i +  32]);
+            vector float vy8  = vec_xl(0, &y[i +  32]);
+            vector float vx9  = vec_xl(0, &x[i +  36]);
+            vector float vy9  = vec_xl(0, &y[i +  36]);
+            vector float vx10 = vec_xl(0, &x[i +  40]);
+            vector float vy10 = vec_xl(0, &y[i +  40]);
+            vector float vx11 = vec_xl(0, &x[i +  44]);
+            vector float vy11 = vec_xl(0, &y[i +  44]);
+            vector float vx12 = vec_xl(0, &x[i +  48]);
+            vector float vy12 = vec_xl(0, &y[i +  48]);
+            vector float vx13 = vec_xl(0, &x[i +  52]);
+            vector float vy13 = vec_xl(0, &y[i +  52]);
+            vector float vx14 = vec_xl(0, &x[i +  56]);
+            vector float vy14 = vec_xl(0, &y[i +  56]);
+            vector float vx15 = vec_xl(0, &x[i +  60]);
+            vector float vy15 = vec_xl(0, &y[i +  60]);
+
+            vector float diff0  = vec_sub(vx0,  vy0);
+            vector float diff1  = vec_sub(vx1,  vy1);
+            vector float diff2  = vec_sub(vx2,  vy2);
+            vector float diff3  = vec_sub(vx3,  vy3);
+            vector float diff4  = vec_sub(vx4,  vy4);
+            vector float diff5  = vec_sub(vx5,  vy5);
+            vector float diff6  = vec_sub(vx6,  vy6);
+            vector float diff7  = vec_sub(vx7,  vy7);
+            vector float diff8  = vec_sub(vx8,  vy8);
+            vector float diff9  = vec_sub(vx9,  vy9);
+            vector float diff10 = vec_sub(vx10, vy10);
+            vector float diff11 = vec_sub(vx11, vy11);
+            vector float diff12 = vec_sub(vx12, vy12);
+            vector float diff13 = vec_sub(vx13, vy13);
+            vector float diff14 = vec_sub(vx14, vy14);
+            vector float diff15 = vec_sub(vx15, vy15);
+
+            vres0  = vec_madd(diff0,  diff0,  vres0);
+            vres1  = vec_madd(diff1,  diff1,  vres1);
+            vres2  = vec_madd(diff2,  diff2,  vres2);
+            vres3  = vec_madd(diff3,  diff3,  vres3);
+            vres4  = vec_madd(diff4,  diff4,  vres4);
+            vres5  = vec_madd(diff5,  diff5,  vres5);
+            vres6  = vec_madd(diff6,  diff6,  vres6);
+            vres7  = vec_madd(diff7,  diff7,  vres7);
+            vres8  = vec_madd(diff8,  diff8,  vres8);
+            vres9  = vec_madd(diff9,  diff9,  vres9);
+            vres10 = vec_madd(diff10, diff10, vres10);
+            vres11 = vec_madd(diff11, diff11, vres11);
+            vres12 = vec_madd(diff12, diff12, vres12);
+            vres13 = vec_madd(diff13, diff13, vres13);
+            vres14 = vec_madd(diff14, diff14, vres14);
+            vres15 = vec_madd(diff15, diff15, vres15);
+        }
+
+        // Build a reduction tree to sum the 16 vector accumulators.
+        vector float vsum0 = vec_add(vres0,  vres1);
+        vector float vsum1 = vec_add(vres2,  vres3);
+        vector float vsum2 = vec_add(vres4,  vres5);
+        vector float vsum3 = vec_add(vres6,  vres7);
+        vector float vsum4 = vec_add(vres8,  vres9);
+        vector float vsum5 = vec_add(vres10, vres11);
+        vector float vsum6 = vec_add(vres12, vres13);
+        vector float vsum7 = vec_add(vres14, vres15);
+
+        vsum0 = vec_add(vsum0, vsum1);
+        vsum2 = vec_add(vsum2, vsum3);
+        vsum4 = vec_add(vsum4, vsum5);
+        vsum6 = vec_add(vsum6, vsum7);
+        vsum0 = vec_add(vsum0, vsum2);
+        vsum4 = vec_add(vsum4, vsum6);
+        vector float vsum = vec_add(vsum0, vsum4);
+
+        // Process any leftover elements.
+        for (size_t i = base; i < d; i++) {
+            float tmp = x[i] - y[i];
+            res += tmp * tmp;
+        }
+        res += vec_extract(vsum, 0) +
+                vec_extract(vsum, 1) +
+                vec_extract(vsum, 2) +
+                vec_extract(vsum, 3);
+        return res;
+    }
 }
+
 
 float
 fvec_norm_L2sqr_ref_ippc (const float* x, size_t d) {
