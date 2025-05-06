@@ -24,35 +24,199 @@
 
 namespace powerpc {
 
-float
-cosine_distance_ref_ippc (const float* x, const float* y, size_t d)
+// float
+// cosine_distance_ref_ippc (const float* x, const float* y, size_t d)
+// {
+//     float res = 0.0, dotpdt = 0.0, mag_vx = 0.0, mag_vy=0.0;
+//     size_t base,i;
+//     vector float vx, vy;
+//     vector float vdotpdt = {0.0}, sqr_mag_vx = {0.0}, sqr_mag_vy = {0.0};
+//     vector float vres = {0.0};
+//     base = (d / FLOAT_VEC_SIZE) * FLOAT_VEC_SIZE;
+//     for (size_t i = 0; i < base; i = i + FLOAT_VEC_SIZE) 
+//         {
+//             vx = vec_xl ((long)(i*sizeof(float)), (float *)x);
+//             vy = vec_xl ((long)(i*sizeof(float)), (float *)y);
+//             vdotpdt = vec_madd(vx, vy, vdotpdt);
+//             sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+//             sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+//         }            
+//     dotpdt = vdotpdt[0] + vdotpdt[1] + vdotpdt[2] + vdotpdt[3];
+//     mag_vx = sqr_mag_vx[0] + sqr_mag_vx[1] + sqr_mag_vx[2] + sqr_mag_vx[3];
+//     mag_vy = sqr_mag_vy[0] + sqr_mag_vy[1] + sqr_mag_vy[2] + sqr_mag_vy[3];
+//     /* Handle any remaining data elements */
+//     for (i = base; i < d; i++) 
+//     {
+//         dotpdt += x[i] * y[i];
+//         mag_vx += x[i] * x[i];
+//         mag_vy += y[i] * y[i];
+        
+//     }
+//     res = 1.0f - (dotpdt/(sqrt(mag_vx * mag_vy)));
+//     return res;
+// }
+float cosine_distance_ref_ippc(const float* x, const float* y, size_t d)
 {
-    float res = 0.0, dotpdt = 0.0, mag_vx = 0.0, mag_vy=0.0;
-    size_t base,i;
-    vector float vx, vy;
-    vector float vdotpdt = {0.0}, sqr_mag_vx = {0.0}, sqr_mag_vy = {0.0};
-    vector float vres = {0.0};
-    base = (d / FLOAT_VEC_SIZE) * FLOAT_VEC_SIZE;
-    for (size_t i = 0; i < base; i = i + FLOAT_VEC_SIZE) 
+    float res = 0.0f, dotpdt = 0.0f, mag_vx = 0.0f, mag_vy = 0.0f;
+    size_t base, factor;
+
+    vector float vdotpdt = {0.0f, 0.0f, 0.0f, 0.0f};
+    vector float sqr_mag_vx = {0.0f, 0.0f, 0.0f, 0.0f};
+    vector float sqr_mag_vy = {0.0f, 0.0f, 0.0f, 0.0f};
+
+    if (d >= 128)
+    {
+        factor = FLOAT_VEC_SIZE * 16;
+        base = (d / factor) * factor;
+
+        for (size_t i = 0; i < base; i += factor)
         {
-            vx = vec_xl ((long)(i*sizeof(float)), (float *)x);
-            vy = vec_xl ((long)(i*sizeof(float)), (float *)y);
+            vector float vx, vy;
+
+            vx = vec_xl(0, (float*)&x[i + 0*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 0*FLOAT_VEC_SIZE]);
             vdotpdt = vec_madd(vx, vy, vdotpdt);
             sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
             sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
-        }            
+
+            vx = vec_xl(0, (float*)&x[i + 1*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 1*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+
+            vx = vec_xl(0, (float*)&x[i + 2*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 2*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+
+            vx = vec_xl(0, (float*)&x[i + 3*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 3*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+
+            vx = vec_xl(0, (float*)&x[i + 4*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 4*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+
+            vx = vec_xl(0, (float*)&x[i + 5*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 5*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+
+            vx = vec_xl(0, (float*)&x[i + 6*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 6*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+
+            vx = vec_xl(0, (float*)&x[i + 7*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 7*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+
+            vx = vec_xl(0, (float*)&x[i + 8*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 8*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+
+            vx = vec_xl(0, (float*)&x[i + 9*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 9*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+
+            vx = vec_xl(0, (float*)&x[i + 10*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 10*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+
+            vx = vec_xl(0, (float*)&x[i + 11*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 11*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+
+            vx = vec_xl(0, (float*)&x[i + 12*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 12*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+
+            vx = vec_xl(0, (float*)&x[i + 13*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 13*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+
+            vx = vec_xl(0, (float*)&x[i + 14*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 14*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+
+            vx = vec_xl(0, (float*)&x[i + 15*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 15*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+        }
+    }
+    else
+    {
+        factor = FLOAT_VEC_SIZE * 4;
+        base = (d / factor) * factor;
+
+        for (size_t i = 0; i < base; i += factor)
+        {
+            vector float vx, vy;
+
+            vx = vec_xl(0, (float*)&x[i + 0*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 0*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+
+            vx = vec_xl(0, (float*)&x[i + 1*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 1*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+
+            vx = vec_xl(0, (float*)&x[i + 2*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 2*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+
+            vx = vec_xl(0, (float*)&x[i + 3*FLOAT_VEC_SIZE]);
+            vy = vec_xl(0, (float*)&y[i + 3*FLOAT_VEC_SIZE]);
+            vdotpdt = vec_madd(vx, vy, vdotpdt);
+            sqr_mag_vx = vec_madd(vx, vx, sqr_mag_vx);
+            sqr_mag_vy = vec_madd(vy, vy, sqr_mag_vy);
+        }
+    }
+
     dotpdt = vdotpdt[0] + vdotpdt[1] + vdotpdt[2] + vdotpdt[3];
     mag_vx = sqr_mag_vx[0] + sqr_mag_vx[1] + sqr_mag_vx[2] + sqr_mag_vx[3];
     mag_vy = sqr_mag_vy[0] + sqr_mag_vy[1] + sqr_mag_vy[2] + sqr_mag_vy[3];
-    /* Handle any remaining data elements */
-    for (i = base; i < d; i++) 
+
+    for (size_t i = base; i < d; ++i)
     {
         dotpdt += x[i] * y[i];
         mag_vx += x[i] * x[i];
         mag_vy += y[i] * y[i];
-        
     }
-    res = 1.0f - (dotpdt/(sqrt(mag_vx * mag_vy)));
+
+    res = 1.0f - (dotpdt / (sqrtf(mag_vx * mag_vy)));
     return res;
 }
 
